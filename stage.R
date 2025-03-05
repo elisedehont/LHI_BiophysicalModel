@@ -9,6 +9,8 @@ install.packages("gifski")
 install.packages(c("terra", "spatstat"))
 install.packages("akima")
 install.packages(c("rnaturalearth", "rnaturalearthdata"))
+install.packages("geosphere")
+install.packages("ggforce")
 library(dplyr)
 library(ggplot2)
 library(gganimate)
@@ -27,6 +29,8 @@ library(lubridate)
 library(sp)
 library(rnaturalearth)
 library(rnaturalearthdata)
+library(geosphere)
+library(ggforce)
 #open file
 nc_file <- "C:/Users/33778/Desktop/StageM2/data/DirectionVelocity_data.nc"
 nc <- nc_open(nc_file)
@@ -64,15 +68,16 @@ latitude <- ncvar_get(nc, "latitude")
 #empty list to store annual rasters
 annual_raster_list <- list()
 #Loop through each month
-for (month in unique(time_months)) {
+for (month in unique(time_months[grep("-(09|10|11|12|01)$", time_months)])) {
   print(paste("Processing month:", month))  
   
   #data indices for the month
   indices <- which(time_months == month)
   
-  #extraction of monthly velocity data (U and V) for the surface layer (first depth)
-  uo_month <- uo[,,1,indices]  # longitude, latitude, depth, time
-  vo_month <- vo[,,1,indices]
+  #extraction of monthly velocity data (U and V) 
+  uo_month <- uo[,,indices]  
+  vo_month <- vo[,,indices]
+  
   
   #convert to rasters
   uo_month_raster <- raster(t(apply(uo_month, c(1,2), mean, na.rm = TRUE)))
@@ -93,34 +98,6 @@ for (month in unique(time_months)) {
   writeRaster(direction_month, paste0("direction_", month, ".tif"), format = "GTiff", overwrite = TRUE)
 }
 
-  #loop for each year
-  for (year in unique(time_years)) {
-    print(paste("Processing year:", year))
-    
-    # find the months in the year
-    months_in_year <- time_months[grep(paste0("^", year), time_months)]
-    
-    #list creation to store U and V rasters for each months of the year
-    uo_year_rasters <- list()
-    vo_year_rasters <- list()
-  for (month in months_in_year) {
-    uo_year_rasters[[month]] <- raster(paste0("velocity_", month, ".tif"))
-    vo_year_rasters[[month]] <- raster(paste0("direction_", month, ".tif"))
-  }
-  
-  #calculate the average of monthly rasters
-  uo_year_mean <- calc(stack(uo_year_rasters), fun = mean, na.rm = TRUE)
-  vo_year_mean <- calc(stack(vo_year_rasters), fun = mean, na.rm = TRUE)
-  
-  # Calculate the average direction and velocity per year
-  velocity_year_mean <- sqrt(uo_year_mean^2 + vo_year_mean^2)
-  direction_year_mean <- atan2(vo_year_mean, uo_year_mean) * (180 / pi)
-  
-  #save
-  writeRaster(velocity_year_mean, paste0("velocity_annual_", year, ".tif"), format = "GTiff", overwrite = TRUE)
-  writeRaster(direction_year_mean, paste0("direction_annual_", year, ".tif"), format = "GTiff", overwrite = TRUE)
-}
-
 #inspection OK
 nc_close(nc)
 ###rasters OK to work with
@@ -128,10 +105,10 @@ nc_close(nc)
 
 #load currents direction and velocity rasters for a month
 #define the month and year
-month_year <- "2015-06"
+month_year <- "2013-05"
 #rasters download
-SCD <- rast("C:/Users/33778/Desktop/StageM2/velocity_2015-06.tif")
-SCV <- rast("C:/Users/33778/Desktop/StageM2/direction_2015-06.tif")
+SCD <- rast("C:/Users/33778/Desktop/StageM2/velocity_2013-05.tif")
+SCV <- rast("C:/Users/33778/Desktop/StageM2/direction_2013-05.tif")
 
 #Define the area of interest (AOI)
 AOI <- ext(153.9583, 162.9584, -35.04167, -25.95833)
@@ -196,6 +173,127 @@ ggplot() +
   theme_minimal() +
   coord_sf(xlim = c(153.9583, 162.9584), ylim = c(-35.04167, -25.95833))
 
+######currents characterisation####
+
+
+#Lord Howe Island
+lord_howe <- data.frame(
+  lon = 159.0833,
+  lat = -31.5500
+)
+
+#buffer around LHI (~1°)
+buffer_radius <- 1  #degrees
+buffer_extent <- ext(
+  lord_howe$lon - buffer_radius, lord_howe$lon + buffer_radius,
+  lord_howe$lat - buffer_radius, lord_howe$lat + buffer_radius
+)
+
+#Data extraction in the area of interest (buffer)
+SCD_buffer <- crop(SCD_crop, buffer_extent)  # Vitesse
+SCV_buffer <- crop(SCV_crop, buffer_extent)  # Direction
+
+
+current_df <- current_df[current_df$month %in% c(9, 10, 11, 12, 1), ]
+current_df$month <- sprintf("%02d", as.numeric(current_df$month))
+time_values <- as.Date(paste0(current_df$year, "-", current_df$month, "-01"), format = "%Y-%m-%d")
+
+
+# Dataframe
+vel_df <- as.data.frame(SCD_buffer, xy = TRUE)
+dir_df <- as.data.frame(SCV_buffer, xy = TRUE)
+colnames(vel_df) <- c("x", "y", "velocity")
+colnames(dir_df) <- c("x", "y", "direction")
+
+# Merge data and delete NAs
+current_df <- na.omit(merge(vel_df, dir_df, by = c("x", "y")))
+
+# Calculating the direction of points towards Lord Howe
+bearing_to_lord_howe <- function(lon, lat) {
+  bearing(c(lon, lat), c(lord_howe$lon, lord_howe$lat))  
+}
+
+current_df$bearing_to_lh <- mapply(bearing_to_lord_howe, current_df$x, current_df$y)
+
+# Determining whether a current is flowing into or out of Lord Howe
+angle_diff <- abs(current_df$direction - current_df$bearing_to_lh)  # Difference between current direction and direction towards LHI
+current_df$type <- ifelse(angle_diff < 90, "Arriving", "Leaving")  # <90° = incoming current, >90° = outgoing
+
+# Statistics
+current_stats <- current_df %>%
+  group_by(type) %>%
+  summarise(
+    mean_velocity = mean(velocity, na.rm = TRUE),
+    sd_velocity = sd(velocity, na.rm = TRUE),
+    mean_direction = mean(direction, na.rm = TRUE)
+  )
+
+# Results
+print(current_stats)
+#1 Arriving         mean velo :0.191       sd dir : 0.132         mean dir: -53.7
+#2 Leaving          mean velo: 0.361       sd vel : 0.128         mean dir : -58.5
+
+#current vectors map around LHI
+ggplot() +
+  geom_segment(data = current_df_filtered, 
+               aes(x = x, y = y,
+                   xend = x + sin(deg2rad(direction)) * velocity * 0.1,
+                   yend = y + cos(deg2rad(direction)) * velocity * 0.1,
+                   color = velocity),
+               arrow = arrow(length = unit(0.2, "cm"))) +
+  geom_point(data = lord_howe, aes(x = lon, y = lat), color = "red", size = 3) +
+  geom_text(data = lord_howe, aes(x = lon, y = lat, label = "Lord Howe Island"), 
+            hjust = 0, vjust = -1, color = "black", size = 4) +
+  scale_color_gradient(low = "lightblue", high = "purple", name = "Velocity") +
+  labs(title = "Current Vectors (Sep-Jan) Around Lord Howe", x = "Longitude", y = "Latitude") +
+  theme_minimal()
+
+#incoming/outgoing currents map
+ggplot() +
+  geom_point(data = current_df_filtered, aes(x = x, y = y, color = type), alpha = 0.7) +
+  geom_point(data = lord_howe, aes(x = lon, y = lat), color = "red", size = 3) +
+  scale_color_manual(values = c("Arriving" = "blue", "Leaving" = "orange")) +
+  labs(title = "Arriving vs Leaving Currents (Sep-Jan)", x = "Longitude", y = "Latitude", color = "Current Type") +
+  theme_minimal()
+
+#histogram of currents speed
+ggplot(current_df_filtered, aes(x = velocity, fill = type)) +
+  geom_histogram(position = "dodge", bins = 30, alpha = 0.7) +
+  scale_fill_manual(values = c("Arriving" = "blue", "Leaving" = "orange")) +
+  labs(title = "Velocity Distribution (Sep-Jan)", 
+       x = "Velocity (m/s)", y = "Count", fill = "Current Type") +
+  theme_minimal()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ###temperature###
 #open file
 nc_file2 <- "C:/Users/33778/Desktop/StageM2/data/seawaterTemperatures.nc"
@@ -237,8 +335,8 @@ for (month in unique(time_months2)) {
   print(paste("Month:", month, "- Indices:", length(indices2)))
   
   if (length(indices2) > 1) {
-    #Extraction of surface temperatures (depth 1)
-    temp_month <- apply(thetao[,,1,indices2, drop = FALSE], c(1,2), mean, na.rm = TRUE)
+    #Extraction of surface temperatures 
+    temp_month <- apply(thetao[,,indices2, drop = FALSE], c(1,2), mean, na.rm = TRUE)
   } else {
     temp_month <- thetao[,,1,indices2]  # Si un seul point, pas besoin de moyenne
   }
@@ -306,7 +404,7 @@ ggplot() +
   theme_minimal()
 ##DHW
 #open file
-nc_file3 <- "C:/Users/33778/Desktop/StageM2/data/DHW.nc"
+nc_file3 <- "C:/Users/33778/Desktop/StageM2/DHW1.nc"
 nc3 <- nc_open(nc_file3)
 
 # Print variable names and dimensions to check
@@ -317,15 +415,144 @@ time_values3 <- ncvar_get(nc3, "time")  # Vérifier le nom correct de la variabl
 time_units3 <- ncatt_get(nc3, "time", "units")$value  
 print(time_units3)
 
-longitude3 <- ncvar_get(nc3, "longitude")
-latitude3 <- ncvar_get(nc3, "latitude")
-dhw <- ncvar_get(nc3, "degree_heating_week")  # Vérifie si le nom est correct
+#convert time values to dates
+time_origin3 <- as.POSIXct("1970-01-01 00:00:00", tz = "UTC")
+time_dates3 <- time_origin + time_values
+
+#print first and last dates
+print(range(time_dates3)) ##05-2011 to 05 2021 OK
+diff_time3 <- diff(time_dates3)  # Compute time differences
+print(unique(diff_time3))  # Print unique time intervals
+print(head(time_dates3, 20))  #first 20 time points OK
+print(tail(time_dates3, 20))  #last 20 time points OK
+#Convert dates to year-month format
+time_months3 <- format(time_dates3, "%Y-%m")
+
+#Create an empty list to store monthly averages
+dhw_rasters <- list()
+#longitude and latitude
+dhw <- ncvar_get(nc3, "degree_heating_week")  # Variable DHW
+lon <- ncvar_get(nc3, "longitude")
+lat <- ncvar_get(nc3, "latitude")
+dim(dhw) #3dim ok
 
 
+#loop for each month
+for (month in unique(time_months3)) {
+  idx <- which(time_months3 == month)  
+  
+  if (length(dim(dhw)) == 3) {
+    dhw_month <- apply(dhw[,,idx], c(1,2), mean, na.rm = TRUE)  
+  } else {
+    dhw_month <- dhw[,,idx]  
+  }
+  
+  dhw_month <- as.matrix(dhw_month)
+  r3 <- raster(t(dhw_month), xmn=min(lon), xmx=max(lon), ymn=min(lat), ymx=max(lat))
+  projection(r3) <- CRS("+proj=longlat +datum=WGS84")
+  
+  dhw_rasters[[month]] <- r3  
+}
+
+#save
+for (month in names(dhw_rasters)) {
+  writeRaster(dhw_rasters[[month]], filename=paste0("DHW_", month, ".tif"), format="GTiff", overwrite=TRUE)
+}
+##DHW rasters ready to use
+#graph
+# Load necessary libraries
+library(terra)
+library(sp)
+library(raster)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sf)
+library(ggplot2)
+
+# Define the month and year
+month_year <- "2013-05"
+
+# Rasters download
+SCD <- rast("C:/Users/33778/Desktop/StageM2/velocity_2013-05.tif")
+SCV <- rast("C:/Users/33778/Desktop/StageM2/direction_2013-05.tif")
+DHW <- rast("C:/Users/33778/Desktop/StageM2/DHW_2013-05.tif")
+
+# Define the area of interest (AOI)
+AOI <- ext(153.9583, 162.9584, -35.04167, -25.95833)
+
+# Load world map data
+world <- ne_countries(scale = "medium", returnclass = "sf")
+land <- st_crop(world, c(xmin = 153.9583, xmax = 162.9584, ymin = -35.04167, ymax = -25.95833))
+
+# Cut the rasters
+SCD_crop <- crop(SCD, AOI)
+SCV_crop <- crop(SCV, AOI)
+DHW_crop <- crop(DHW, AOI) #cropp DHW
+
+# Convert into data.frame
+vel_df <- as.data.frame(SCD_crop, xy = TRUE)
+dir_df <- as.data.frame(SCV_crop, xy = TRUE)
+dhw_df <- as.data.frame(DHW_crop, xy = TRUE) #DHw data in df
+
+# Naming columns
+colnames(vel_df) <- c("x", "y", "velocity")
+colnames(dir_df) <- c("x", "y", "direction")
+colnames(dhw_df) <- c("x", "y", "dhw") #DHw colnames
+
+# Merge the two data.frames and delete the NAs
+current_df <- na.omit(merge(vel_df, dir_df, by = c("x", "y")))
+
+# Merge current data with DHW data
+current_df <- merge(current_df, dhw_df, by = c("x", "y"), all.x = TRUE)
+
+# Function for calculating arrow coordinates
+deg2rad <- function(deg) (pi * deg) / 180
+arrowCOORD <- function(x, y, r, s = 0.08) {
+  ENDx <- x + sin(deg2rad(r)) * s
+  ENDy <- y + cos(deg2rad(r)) * s
+  STAx <- x - sin(deg2rad(r)) * s
+  STAy <- y - cos(deg2rad(r)) * s
+  ar1X <- ENDx + sin(deg2rad(r + 135)) * (s / 2)
+  ar1Y <- ENDy + cos(deg2rad(r + 135)) * (s / 2)
+  ar2X <- ENDx + sin(deg2rad(r - 135)) * (s / 2)
+  ar2Y <- ENDy + cos(deg2rad(r - 135)) * (s / 2)
+  return(list('ENDx' = ENDx, 'ENDy' = ENDy, 'STAx' = STAx, 'STAy' = STAy,
+              'ar1X' = ar1X, 'ar1Y' = ar1Y, 'ar2X' = ar2X, 'ar2Y' = ar2Y))
+}
+
+# Reducing the arrows density
+step <- 5
+current_df_sampled <- current_df[seq(1, nrow(current_df), by = step), ]
+
+# Add Lord Howe island-can be done with rnaturalearthdata later
+lord_howe <- data.frame(
+  lon = 159.0833, # Longitude Lord Howe Island
+  lat = -31.5500 # Latitude Lord Howe Island
+)
+
+# Plot
+ggplot() +
+  geom_raster(data = current_df, aes(x = x, y = y, fill = dhw)) + # Add DHW as raster
+  scale_fill_gradientn(colors = c("blue", "yellow", "red"), name = "DHW (°C-weeks)") + # color scale for DHW
+  geom_sf(data = land, fill = "darkgreen", color = "black") +
+  geom_segment(data = current_df_sampled,
+               aes(x = x, y = y,
+                   xend = x + sin(deg2rad(direction)) * velocity * 0.1,
+                   yend = y + cos(deg2rad(direction)) * velocity * 0.1,
+                   color = velocity),
+               arrow = arrow(length = unit(0.2, "cm"))) +
+  geom_point(data = lord_howe, aes(x = lon, y = lat), color = "red", size = 3) +
+  geom_text(data = lord_howe, aes(x = lon, y = lat, label = "Lord Howe Island"),
+            hjust = 0, vjust = -1, color = "black", size = 3) +
+  scale_color_gradient(low = "lightblue", high = "purple",
+                       name = "Velocity") +
+  labs(title = paste("Current Vectors and Degree Heating Week -", month_year),
+       x = "Longitude", y = "Latitude") +
+  theme_minimal() +
+  coord_sf(xlim = c(153.9583, 162.9584), ylim = c(-35.04167, -25.95833))
 
 
-
-####example for larvae tracking
+ ####example for larvae tracking
 #larvae data simulation
 set.seed(123)  #reproductibility
 n_larves <- 150

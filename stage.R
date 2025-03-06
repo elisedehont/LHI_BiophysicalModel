@@ -77,29 +77,29 @@ annual_raster_list <- list()
 for (month in unique(time_months[grep("-(09|10|11|12|01)$", time_months)])) {
   print(paste("Processing month:", month))  
   
-  #data indices for the month
+#data indices for the month
   indices <- which(time_months == month)
   
-  #extraction of monthly velocity data (U and V) 
+#extraction of monthly velocity data (U and V) 
   uo_month <- uo[,,indices]  
   vo_month <- vo[,,indices]
   
   
-  #convert to rasters
+#convert to rasters
   uo_month_raster <- raster(t(apply(uo_month, c(1,2), mean, na.rm = TRUE)))
   vo_month_raster <- raster(t(apply(vo_month, c(1,2), mean, na.rm = TRUE)))
   
-  #Defining the raster extent
+#Defining the raster extent
   extent(uo_month_raster) <- extent(min(longitude), max(longitude), min(latitude), max(latitude))
   extent(vo_month_raster) <- extent(min(longitude), max(longitude), min(latitude), max(latitude))
   #compute velocity and direction
   velocity_month <- sqrt(uo_month_raster^2 + vo_month_raster^2)
   direction_month <- atan2(vo_month_raster, uo_month_raster) * (180 / pi)
   
-  #results storage
+#results storage
   monthly_avg_list[[month]] <- list(velocity = velocity_month, direction = direction_month)
   
-  # Saving rasters for each month
+#saving rasters for each month
   writeRaster(velocity_month, paste0("velocity_", month, ".tif"), format = "GTiff", overwrite = TRUE)
   writeRaster(direction_month, paste0("direction_", month, ".tif"), format = "GTiff", overwrite = TRUE)
 }
@@ -111,15 +111,15 @@ nc_close(nc)
 
 #load currents direction and velocity rasters for a month
 #define the month and year
-month_year <- "2013-05"
+month_year <- "2012-12"
 #rasters download
-SCD <- rast("C:/Users/33778/Desktop/StageM2/velocity_2013-05.tif")
-SCV <- rast("C:/Users/33778/Desktop/StageM2/direction_2013-05.tif")
+SCD <- rast("C:/Users/33778/Desktop/StageM2/velocity_2012-12.tif")
+SCV <- rast("C:/Users/33778/Desktop/StageM2/direction_2012-12.tif")
 
 #Define the area of interest (AOI)
-AOI <- ext(153.9583, 162.9584, -35.04167, -25.95833)
+AOI <- ext(153, 163, -36, -24)
 world <- ne_countries(scale = "medium", returnclass = "sf")
-land <- st_crop(world, c(xmin = 153.9583, xmax = 162.9584, ymin = -35.04167, ymax = -25.95833))
+land <- st_crop(world, c(xmin = 153, xmax = 163, ymin = -36, ymax = -24))
 
 #Cut the rasters
 SCD_crop <- crop(SCD, AOI)
@@ -177,7 +177,7 @@ ggplot() +
   labs(title = paste("Current Vectors -", month_year),
        x = "Longitude", y = "Latitude") +
   theme_minimal() +
-  coord_sf(xlim = c(153.9583, 162.9584), ylim = c(-35.04167, -25.95833))
+  coord_sf(xlim = c(153, 163), ylim = c(-36, -24))
 
 ######currents characterisation####
 
@@ -188,8 +188,8 @@ lord_howe <- data.frame(
   lat = -31.5500
 )
 
-#buffer around LHI (~1°)
-buffer_radius <- 1  #degrees
+#buffer around LHI (~8°)
+buffer_radius <- 8  #degrees
 buffer_extent <- ext(
   lord_howe$lon - buffer_radius, lord_howe$lon + buffer_radius,
   lord_howe$lat - buffer_radius, lord_howe$lat + buffer_radius
@@ -205,27 +205,27 @@ current_df <- current_df %>% filter(!is.na(direction) & !is.na(velocity))
 time_values <- as.Date(paste0(current_df$year, "-", current_df$month, "-01"), format = "%Y-%m-%d")
 
 
-# Dataframe
+#dataframe
 vel_df <- as.data.frame(SCD_buffer, xy = TRUE)
 dir_df <- as.data.frame(SCV_buffer, xy = TRUE)
 colnames(vel_df) <- c("x", "y", "velocity")
 colnames(dir_df) <- c("x", "y", "direction")
 
-# Merge data and delete NAs
+#merge data and delete NAs
 current_df <- na.omit(merge(vel_df, dir_df, by = c("x", "y")))
 
-# Calculating the direction of points towards Lord Howe
+#calculating the direction of points towards Lord Howe
 bearing_to_lord_howe <- function(lon, lat) {
   bearing(c(lon, lat), c(lord_howe$lon, lord_howe$lat))  
 }
 
 current_df$bearing_to_lh <- mapply(bearing_to_lord_howe, current_df$x, current_df$y)
 
-# Determining whether a current is flowing into or out of Lord Howe
-angle_diff <- abs(current_df$direction - current_df$bearing_to_lh)  # Difference between current direction and direction towards LHI
-current_df$type <- ifelse(angle_diff < 90, "Arriving", "Leaving")  # <90° = incoming current, >90° = outgoing
+#determining if the current is flowing into or out of Lord Howe
+angle_diff <- abs(current_df$direction - current_df$bearing_to_lh)  #difference between current direction and direction towards LHI
+current_df$type <- ifelse(angle_diff < 90, "Arriving", "Leaving")  #<90°= incoming current, >90° = outgoing
 
-# Statistics
+#statistics
 current_stats <- current_df %>%
   group_by(type) %>%
   summarise(
@@ -234,10 +234,10 @@ current_stats <- current_df %>%
     mean_direction = mean(direction, na.rm = TRUE)
   )
 
-# Results
+#results
 print(current_stats)
-#1 Arriving         mean velo :0.191       sd dir : 0.132         mean dir: -53.7
-#2 Leaving          mean velo: 0.361       sd vel : 0.128         mean dir : -58.5
+#1 Arriving         mean velo :0.252       sd dir : 0.106         mean dir: -46.6
+#2 Leaving          mean velo: 0.305       sd vel : 0.132         mean dir : -37.9
 
 #current vectors map around LHI
 ggplot() +
@@ -269,7 +269,8 @@ ggplot(current_df, aes(x = velocity, fill = type)) +
   labs(title = "Velocity Distribution (Sep-Jan)", 
        x = "Velocity (m/s)", y = "Count", fill = "Current Type") +
   theme_minimal()
-##zoom
+
+####zoom
 
 #world data
 world <- ne_countries(scale = "large", returnclass = "sf")
@@ -285,9 +286,9 @@ zoom_lat <- c(-32.0, -31.0)  # Latitudes
 ggplot() +
   # Fond de carte des côtes
   geom_sf(data = world, fill = "gray80", color = "black") +
-  geom_sf(data = coastline, color = "black") +  # Ajoute les côtes en noir
+  geom_sf(data = coastline, color = "black") +  
   
-  #current vectors
+#current vectors
   geom_segment(data = current_df, 
                aes(x = x, y = y,
                    xend = x + sin(deg2rad(direction)) * velocity * 0.3,
@@ -295,23 +296,90 @@ ggplot() +
                    color = velocity),
                arrow = arrow(length = unit(0.3, "cm")), alpha = 0.7) +
   
-  #LHI
+#LHI
   geom_point(data = lord_howe, aes(x = lon, y = lat), size = 3) +
   geom_text(data = lord_howe, aes(x = lon, y = lat, label = "Lord Howe Island"), 
             hjust = 0, vjust = -1, color = "black", size = 4) +
   
-  #velocity colors
+#velocity colors
   scale_color_gradient(low = "lightblue", high = "purple", name = "Velocity") +
   
-  #zoom limits
+#zoom limits
   coord_sf(xlim = zoom_lon, ylim = zoom_lat, expand = FALSE) +
   
-  # Labels et style minimaliste
+#labs
   labs(title = "Current Vectors (Sep-Jan) Around Lord Howe", 
        x = "Longitude", y = "Latitude") +
   theme_minimal()
 
+#####unzoom
 
+#coordinates
+buffer_extent <- ext(
+  152, 160,  # Longitude
+  -36, -24   # Latitude
+)
+
+#data extraction
+SCD_buffer <- crop(SCD_crop, buffer_extent) 
+SCV_buffer <- crop(SCV_crop, buffer_extent)  
+
+#dataframe
+vel_df <- as.data.frame(SCD_buffer, xy = TRUE)
+dir_df <- as.data.frame(SCV_buffer, xy = TRUE)
+colnames(vel_df) <- c("x", "y", "velocity")
+colnames(dir_df) <- c("x", "y", "direction")
+
+#merge and delete NAs
+current_df <- na.omit(merge(vel_df, dir_df, by = c("x", "y")))
+
+#coastlines
+coastline <- ne_countries(scale = "medium", returnclass = "sf")
+australia_coast <- coastline %>% filter(admin == "Australia")
+
+#current vectors
+ggplot() +
+  geom_sf(data = australia_coast, fill = "gray80", color = "black") + 
+  geom_segment(data = current_df, 
+               aes(x = x, y = y,
+                   xend = x + sin(deg2rad(direction)) * velocity * 0.3,
+                   yend = y + cos(deg2rad(direction)) * velocity * 0.3,
+                   color = velocity),
+               arrow = arrow(length = unit(0.2, "cm"))) +
+  geom_point(data = lord_howe, aes(x = lon, y = lat), color = "red", size = 3) +
+  geom_text(data = lord_howe, aes(x = lon, y = lat, label = "Lord Howe Island"), 
+            hjust = 0, vjust = -1, color = "black", size = 4) +
+  scale_color_gradient(low = "lightblue", high = "purple", name = "Velocity") +
+  coord_sf(xlim = c(153, 160), ylim = c(-36, -24), expand = FALSE) +  
+  labs(title = "Currents between East Australia & Lord Howe", x = "Longitude", y = "Latitude") +
+  theme_minimal()
+
+#incoming/outgoing current calcul
+bearing_to_lord_howe <- function(lon, lat) {
+  bearing(c(lon, lat), c(lord_howe$lon, lord_howe$lat))  
+}
+
+current_df$bearing_to_lh <- mapply(bearing_to_lord_howe, current_df$x, current_df$y)
+
+
+angle_diff <- abs(current_df$direction - current_df$bearing_to_lh)
+
+#incoming/outgoing
+current_df$type <- ifelse(angle_diff < 90, "Arriving", "Leaving")
+ggplot() +
+  geom_point(data = current_df, aes(x = x, y = y, color = type), alpha = 0.7) +
+  geom_point(data = lord_howe, aes(x = lon, y = lat), color = "red", size = 3) +
+  scale_color_manual(values = c("Arriving" = "blue", "Leaving" = "orange")) +
+  labs(title = "Arriving vs Leaving Currents (Sep-Jan)", x = "Longitude", y = "Latitude", color = "Current Type") +
+  theme_minimal()
+
+#histogram of currents speed
+ggplot(current_df, aes(x = velocity, fill = type)) +
+  geom_histogram(position = "dodge", bins = 30, alpha = 0.7) +
+  scale_fill_manual(values = c("Arriving" = "blue", "Leaving" = "orange")) +
+  labs(title = "Velocity Distribution (Sep-Jan)", 
+       x = "Velocity (m/s)", y = "Count", fill = "Current Type") +
+  theme_minimal()
 
 
 

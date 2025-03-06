@@ -11,6 +11,7 @@ install.packages("akima")
 install.packages(c("rnaturalearth", "rnaturalearthdata"))
 install.packages("geosphere")
 install.packages("ggforce")
+install.packages("ggspatial")
 library(dplyr)
 library(ggplot2)
 library(gganimate)
@@ -27,6 +28,7 @@ library(raster)  # To manipulate and visualize raster data
 library(terra)   # Alternative for raster operations
 library(lubridate)
 library(sp)
+library(ggspatial)
 library(rnaturalearth)
 library(rnaturalearthdata)
 library(geosphere)
@@ -241,8 +243,8 @@ print(current_stats)
 ggplot() +
   geom_segment(data = current_df, 
                aes(x = x, y = y,
-                   xend = x + sin(deg2rad(direction)) * velocity * 0.1,
-                   yend = y + cos(deg2rad(direction)) * velocity * 0.1,
+                   xend = x + sin(deg2rad(direction)) * velocity * 0.3,
+                   yend = y + cos(deg2rad(direction)) * velocity * 0.3,
                    color = velocity),
                arrow = arrow(length = unit(0.2, "cm"))) +
   geom_point(data = lord_howe, aes(x = lon, y = lat), color = "red", size = 3) +
@@ -267,17 +269,47 @@ ggplot(current_df, aes(x = velocity, fill = type)) +
   labs(title = "Velocity Distribution (Sep-Jan)", 
        x = "Velocity (m/s)", y = "Count", fill = "Current Type") +
   theme_minimal()
+##zoom
 
+#world data
+world <- ne_countries(scale = "large", returnclass = "sf")
 
+#coastlines data
+coastline <- ne_coastline(scale = "large", returnclass = "sf")
 
+#coordinates for Lord Howe Island
+zoom_lon <- c(158.0, 160.0)  # Longitudes
+zoom_lat <- c(-32.0, -31.0)  # Latitudes
 
-
-
-
-
-
-
-
+#currents map and LHI design
+ggplot() +
+  # Fond de carte des côtes
+  geom_sf(data = world, fill = "gray80", color = "black") +
+  geom_sf(data = coastline, color = "black") +  # Ajoute les côtes en noir
+  
+  #current vectors
+  geom_segment(data = current_df, 
+               aes(x = x, y = y,
+                   xend = x + sin(deg2rad(direction)) * velocity * 0.3,
+                   yend = y + cos(deg2rad(direction)) * velocity * 0.3,
+                   color = velocity),
+               arrow = arrow(length = unit(0.3, "cm")), alpha = 0.7) +
+  
+  #LHI
+  geom_point(data = lord_howe, aes(x = lon, y = lat), size = 3) +
+  geom_text(data = lord_howe, aes(x = lon, y = lat, label = "Lord Howe Island"), 
+            hjust = 0, vjust = -1, color = "black", size = 4) +
+  
+  #velocity colors
+  scale_color_gradient(low = "lightblue", high = "purple", name = "Velocity") +
+  
+  #zoom limits
+  coord_sf(xlim = zoom_lon, ylim = zoom_lat, expand = FALSE) +
+  
+  # Labels et style minimaliste
+  labs(title = "Current Vectors (Sep-Jan) Around Lord Howe", 
+       x = "Longitude", y = "Latitude") +
+  theme_minimal()
 
 
 
@@ -464,52 +496,45 @@ for (month in names(dhw_rasters)) {
 }
 ##DHW rasters ready to use
 #graph
-# Load necessary libraries
-library(terra)
-library(sp)
-library(raster)
-library(rnaturalearth)
-library(rnaturalearthdata)
-library(sf)
-library(ggplot2)
+#load necessary libraries
 
-# Define the month and year
+#define the month and year
 month_year <- "2013-05"
 
-# Rasters download
+#rasters download
 SCD <- rast("C:/Users/33778/Desktop/StageM2/velocity_2013-05.tif")
 SCV <- rast("C:/Users/33778/Desktop/StageM2/direction_2013-05.tif")
 DHW <- rast("C:/Users/33778/Desktop/StageM2/DHW_2013-05.tif")
 
-# Define the area of interest (AOI)
+#define the area of interest (AOI)
 AOI <- ext(153.9583, 162.9584, -35.04167, -25.95833)
 
-# Load world map data
+#load world map data
 world <- ne_countries(scale = "medium", returnclass = "sf")
 land <- st_crop(world, c(xmin = 153.9583, xmax = 162.9584, ymin = -35.04167, ymax = -25.95833))
 
-# Cut the rasters
+#cut the rasters
 SCD_crop <- crop(SCD, AOI)
 SCV_crop <- crop(SCV, AOI)
 DHW_crop <- crop(DHW, AOI) #cropp DHW
 
-# Convert into data.frame
+#convert into data.frame
 vel_df <- as.data.frame(SCD_crop, xy = TRUE)
 dir_df <- as.data.frame(SCV_crop, xy = TRUE)
 dhw_df <- as.data.frame(DHW_crop, xy = TRUE) #DHw data in df
 
-# Naming columns
+#naming columns
 colnames(vel_df) <- c("x", "y", "velocity")
 colnames(dir_df) <- c("x", "y", "direction")
 colnames(dhw_df) <- c("x", "y", "dhw") #DHw colnames
 
-# Merge the two data.frames and delete the NAs
+#merge the two data.frames and delete the NAs
 current_df <- na.omit(merge(vel_df, dir_df, by = c("x", "y")))
 
-# Merge current data with DHW data
+#merge current data with DHW data
 current_df <- merge(current_df, dhw_df, by = c("x", "y"), all.x = TRUE)
 
-# Function for calculating arrow coordinates
+#munction for calculating arrow coordinates
 deg2rad <- function(deg) (pi * deg) / 180
 arrowCOORD <- function(x, y, r, s = 0.08) {
   ENDx <- x + sin(deg2rad(r)) * s
@@ -524,17 +549,17 @@ arrowCOORD <- function(x, y, r, s = 0.08) {
               'ar1X' = ar1X, 'ar1Y' = ar1Y, 'ar2X' = ar2X, 'ar2Y' = ar2Y))
 }
 
-# Reducing the arrows density
+#reducing the arrows density
 step <- 5
 current_df_sampled <- current_df[seq(1, nrow(current_df), by = step), ]
 
-# Add Lord Howe island-can be done with rnaturalearthdata later
+#add Lord Howe island-can be done with rnaturalearthdata later
 lord_howe <- data.frame(
   lon = 159.0833, # Longitude Lord Howe Island
   lat = -31.5500 # Latitude Lord Howe Island
 )
 
-# Plot
+#plot
 ggplot() +
   geom_raster(data = current_df, aes(x = x, y = y, fill = dhw)) + # Add DHW as raster
   scale_fill_gradientn(colors = c("blue", "yellow", "red"), name = "DHW (°C-weeks)") + # color scale for DHW

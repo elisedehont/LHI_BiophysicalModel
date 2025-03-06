@@ -49,6 +49,10 @@ print(time_units)
 #convert time values to dates
 time_origin <- as.POSIXct("1970-01-01 00:00:00", tz = "UTC")
 time_dates <- time_origin + time_values
+time_dates <- time_dates[format(time_dates, "%m") %in% c("09", "10", "11", "12", "01")]
+unique(format(time_dates, "%Y-%m"))
+table(format(time_dates, "%m"))#sept to january OK
+
 
 #print first and last dates
 print(range(time_dates)) ##06-2011 to 05 2021 OK
@@ -195,7 +199,7 @@ SCV_buffer <- crop(SCV_crop, buffer_extent)  # Direction
 
 
 current_df <- current_df[current_df$month %in% c(9, 10, 11, 12, 1), ]
-current_df$month <- sprintf("%02d", as.numeric(current_df$month))
+current_df <- current_df %>% filter(!is.na(direction) & !is.na(velocity))
 time_values <- as.Date(paste0(current_df$year, "-", current_df$month, "-01"), format = "%Y-%m-%d")
 
 
@@ -235,7 +239,7 @@ print(current_stats)
 
 #current vectors map around LHI
 ggplot() +
-  geom_segment(data = current_df_filtered, 
+  geom_segment(data = current_df, 
                aes(x = x, y = y,
                    xend = x + sin(deg2rad(direction)) * velocity * 0.1,
                    yend = y + cos(deg2rad(direction)) * velocity * 0.1,
@@ -250,14 +254,14 @@ ggplot() +
 
 #incoming/outgoing currents map
 ggplot() +
-  geom_point(data = current_df_filtered, aes(x = x, y = y, color = type), alpha = 0.7) +
+  geom_point(data = current_df, aes(x = x, y = y, color = type), alpha = 0.7) +
   geom_point(data = lord_howe, aes(x = lon, y = lat), color = "red", size = 3) +
   scale_color_manual(values = c("Arriving" = "blue", "Leaving" = "orange")) +
   labs(title = "Arriving vs Leaving Currents (Sep-Jan)", x = "Longitude", y = "Latitude", color = "Current Type") +
   theme_minimal()
 
 #histogram of currents speed
-ggplot(current_df_filtered, aes(x = velocity, fill = type)) +
+ggplot(current_df, aes(x = velocity, fill = type)) +
   geom_histogram(position = "dodge", bins = 30, alpha = 0.7) +
   scale_fill_manual(values = c("Arriving" = "blue", "Leaving" = "orange")) +
   labs(title = "Velocity Distribution (Sep-Jan)", 

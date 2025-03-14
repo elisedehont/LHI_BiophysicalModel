@@ -430,7 +430,7 @@ distance_matrix_km <- distance_matrix / 1000
 rownames(distance_matrix_km) <- reef_sites$Reef_Name
 colnames(distance_matrix_km) <- reef_sites$Reef_Name
 
-# Afficher un aperçu
+#see
 print(round(connectivity_matrix, 2))
 #see and save matrix
 round(distance_matrix_km, 2)

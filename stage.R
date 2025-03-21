@@ -17,6 +17,7 @@ install.packages("gdistance")
 install.packages("reticulate")
 install.packages("reshape2")
 install.packages("pheatmap")
+install.packages("patchwork")
 library(dplyr)
 library(ggplot2)
 library(gganimate)
@@ -44,6 +45,7 @@ library(gdistance)
 library(reticulate)
 library(reshape2)
 library(pheatmap)
+library(patchwork)
 #open file
 nc_file <- "C:/Users/33778/Desktop/StageM2/DirectionVelocity_data.nc"
 nc <- nc_open(nc_file)
@@ -484,24 +486,55 @@ raster_friction_directional <- 1 / sqrt(raster_U^2 + raster_V^2)
 raster_friction_directional[raster_friction_directional == Inf] <- NA
 #see and download
 plot(raster_friction_directional, main="Friction Directionnelle")
-writeRaster(raster_friction_directional, "C:/Users/33778/Desktop/StageM2/friction_directional.tif", overwrite = TRUE)
+#Lord Howe Island not covered by the friction raster, so local interpolation using a 3x3 window
+
+#get the extension of the raster using ext()
+extent_friction <- ext(159.00, 159.99, ymin = ymin(ext(raster_friction_directional)), ymax = ymax(ext(raster_friction_directional)))
+
+#extract the region
+raster_friction_region <- crop(raster_friction_directional, extent_friction)
+
+#plot to check
+plot(raster_friction_region, main="Friction raster for longitude 159.00 - 159.99")
+#apply interpolation to the region
+raster_friction_filled_region <- focal(raster_friction_region,
+                                       w = matrix(1, 3, 3), # window 3x3
+                                       fun = mean,
+                                       na.policy = "only", 
+                                       na.rm = TRUE,
+                                       filename = "friction_filled_region.tif",
+                                       overwrite = TRUE)
+
+#plot
+plot(raster_friction_filled_region, main="Interpolated Friction for Longitude 159.00 - 159.99")
+raster_friction_filled <- merge(raster_friction_directional, raster_friction_filled_region)
+
+#final raster
+plot(raster_friction_filled, main="Interpolated directional friction (local average)")
+
+writeRaster(raster_friction_filled, "C:/Users/33778/Desktop/StageM2/friction_directional.tif", overwrite = TRUE)
+#replacing NaN values because Circuitscape cant read it
+raster_friction_filled <- raster("C:/Users/33778/Desktop/StageM2/friction_directional.tif")
+
+NAvalue(raster_friction_filled) <- -9999
+
+#export to .asc format because Circuitscape cant read .tif
+writeRaster(raster_friction_filled, "C:/Users/33778/Desktop/StageM2/friction_directional.asc", NAflag=-9999, overwrite=TRUE)
+#asc format for circuitscape
 
 ###circuitscape raster pairwise
 
-resistance_matrix <- read.table("C:/Users/33778/Desktop/StageM2/connectivity_matrix_csc_resistances", quote="\"", comment.char="")
+resistance_matrix <- read.table("C:/Users/33778/Desktop/StageM2/connectivity_matrix_csc_resistances.out", quote="\"", comment.char="")
 reef_sites <- read.csv("C:/Users/33778/Desktop/StageM2/reefs_format.csv", sep = ";")
 reef_names <- reef_sites$id
 resistance_matrix_clean <- resistance_matrix[-1, -1]
 rownames(resistance_matrix_clean) <- reef_names
 colnames(resistance_matrix_clean) <- reef_names
 connectivity_matrix <- exp(-resistance_matrix_clean)
-#delete duplicates and ensure that columns are kept
-connectivity_matrix_clean <- connectivity_matrix[!duplicated(connectivity_matrix), ]
-connectivity_matrix_clean <- connectivity_matrix_clean[, !duplicated(t(connectivity_matrix))]
-write.csv(connectivity_matrix_clean, "C:/Users/33778/Desktop/StageM2/Connectivity_matrix.csv")
+write.csv(connectivity_matrix, "C:/Users/33778/Desktop/StageM2/Connectivity_matrix.csv")
 
 library(pheatmap)
-pheatmap(connectivity_matrix_clean,
+pheatmap(connectivity_matrix,
          cluster_rows = TRUE,
          cluster_cols = TRUE,
          color = colorRampPalette(c("white", "blue", "darkblue"))(100),
@@ -509,13 +542,13 @@ pheatmap(connectivity_matrix_clean,
 #illegible beacuse 439 lines
 
 ###pca
-pca_res <- prcomp(connectivity_matrix_clean, scale. = TRUE)
+pca_res <- prcomp(connectivity_matrix, scale. = TRUE)
 
 #results from the 2 first principal components
 pca_df <- data.frame(
   PC1 = pca_res$x[,1],
   PC2 = pca_res$x[,2],
-  Reefs = rownames(connectivity_matrix_clean)  # si tu as nommé tes lignes avec les récifs
+  Reefs = rownames(connectivity_matrix)  # si tu as nommé tes lignes avec les récifs
 )
 ggplot(pca_df, aes(x = PC1, y = PC2, label = Reefs)) +
   geom_point(color = "darkgreen", size = 2, alpha = 0.7) +
@@ -529,7 +562,7 @@ ggplot(pca_df, aes(x = PC1, y = PC2, label = Reefs)) +
 install.packages("BiocManager")
 BiocManager::install("ComplexHeatmap")
 library(ComplexHeatmap)
-Heatmap(as.matrix(connectivity_matrix_clean),
+Heatmap(as.matrix(connectivity_matrix),
         name = "Connectivité",
         show_row_names = FALSE,
         show_column_names = FALSE,
@@ -539,22 +572,22 @@ Heatmap(as.matrix(connectivity_matrix_clean),
 
 ###matrix analysis
 
-importance_import <- colSums(connectivity_matrix_clean)
-importance_export <- rowSums(connectivity_matrix_clean)
-top_sources <- sort(importance_export, decreasing = TRUE)[1:10]
-print("Top 10 reef sources :")
+importance_import <- colSums(connectivity_matrix)
+importance_export <- rowSums(connectivity_matrix)
+top_sources <- sort(importance_export, decreasing = TRUE)[1:30]
+print("Top 30 reef sources :")
 print(top_sources)
 
-top_sinks <- sort(importance_import, decreasing = TRUE)[1:10]
-print("Top 10 reef sinks :")
+top_sinks <- sort(importance_import, decreasing = TRUE)[1:30]
+print("Top 30 reef sinks :")
 print(top_sinks)
 #values too similar
 
 ###simulation
 set.seed(42)  #reproductibility
-larval_production <- runif(nrow(connectivity_matrix_clean), min = 0.5, max = 2)
-recruitment_success <- runif(ncol(connectivity_matrix_clean), min = 0.3, max = 1.5)
-connectivity_matrix_bio <- connectivity_matrix_clean
+larval_production <- runif(nrow(connectivity_matrix), min = 0.5, max = 2)
+recruitment_success <- runif(ncol(connectivity_matrix), min = 0.3, max = 1.5)
+connectivity_matrix_bio <- connectivity_matrix
 
 #apply production factor to each line (emission)
 connectivity_matrix_bio <- sweep(connectivity_matrix_bio, 1, larval_production, FUN = "*")
@@ -563,55 +596,110 @@ connectivity_matrix_bio <- sweep(connectivity_matrix_bio, 1, larval_production, 
 connectivity_matrix_bio <- sweep(connectivity_matrix_bio, 2, recruitment_success, FUN = "*")
 importance_export_bio <- rowSums(connectivity_matrix_bio)
 importance_import_bio <- colSums(connectivity_matrix_bio)
-top_sources <- names(sort(importance_export, decreasing = TRUE))[1:10]
-top_sinks   <- names(sort(importance_import, decreasing = TRUE))[1:10]
+top_sources <- names(sort(importance_export, decreasing = TRUE))[1:30]
+top_sinks   <- names(sort(importance_import, decreasing = TRUE))[1:30]
 #quick visualization
-barplot(sort(importance_export_bio, decreasing = TRUE)[1:10], main="Top 10 reef sources", col="orange")
-barplot(sort(importance_import_bio, decreasing = TRUE)[1:10], main="Top 10 sink reefs", col="blue")
-library(networkD3)
-library(dplyr)
+barplot(sort(importance_export_bio, decreasing = TRUE)[1:30], main="Top 10 reef sources", col="orange")
+barplot(sort(importance_import_bio, decreasing = TRUE)[1:30], main="Top 10 sink reefs", col="blue")
 
-##sankey diagram
-#identify the most important flows
-#make sure we have a matrix and not a dataframe
-connectivity_matrix_bio <- as.matrix(connectivity_matrix_bio)
+###quadrant plot
+#dataframe
+reef_df <- data.frame(
+  reef = colnames(connectivity_matrix_bio),
+  export = rowSums(connectivity_matrix_bio),
+  import = colSums(connectivity_matrix_bio)
+)
 
-#convert to long dataframe
-connectivity_df <- reshape2::melt(connectivity_matrix_bio)
-colnames(connectivity_df) <- c("source", "target", "value")
+#calculate metrics
+reef_df$net_flow <- reef_df$export - reef_df$import
+reef_df$inward_degree <- reef_df$import  
 
-#delete low values
-connectivity_df <- connectivity_df[connectivity_df$value > 0, ]
+#transformation into percentiles
+reef_df$net_flow_percentile <- ecdf(reef_df$net_flow)(reef_df$net_flow) * 100
+reef_df$inward_degree_percentile <- ecdf(reef_df$inward_degree)(reef_df$inward_degree) * 100
 
-#top flows
-connectivity_top <- connectivity_df %>%
-  arrange(desc(value)) %>%
-  slice_head(n = 200)
+#ecological classification
+reef_df$role <- "Other"
+reef_df$role[reef_df$net_flow_percentile >= 90] <- "Source"
+reef_df$role[reef_df$net_flow_percentile <= 10] <- "Sink"
+reef_df$role[reef_df$inward_degree_percentile >= 90] <- "Connectivity Hub"
 
-#nodes
-nodes <- data.frame(name = unique(c(connectivity_top$source, connectivity_top$target)))
-#identify each type of nodes
-nodes$type <- ifelse(nodes$name %in% top_sources, "Source",
-                     ifelse(nodes$name %in% top_sinks, "Sink", "Other"))
+#add colours
+colors <- c("Source" = "#003399", "Sink" = "#FF3399", "Connectivity Hub" = "#66CC99", "Other" = "grey80")
 
-#linking clues to reefs
-connectivity_top$source_id <- match(connectivity_top$source, nodes$name) - 1
-connectivity_top$target_id <- match(connectivity_top$target, nodes$name) - 1
+#plot
+p1 <- ggplot(reef_df, aes(x = inward_degree_percentile, y = net_flow_percentile)) +
+  geom_point(aes(color = role), shape = 21, size = 2, stroke = 0.6, fill = "white") +
+  scale_color_manual(values = colors) +
+  geom_vline(xintercept = 90, linetype = "dashed", color = "black") +
+  geom_hline(yintercept = 90, linetype = "dashed", color = "black") +
+  geom_hline(yintercept = 10, linetype = "dashed", color = "black") +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "Reef Connectivity Roles",
+    subtitle = "Based on Net Larval Flow and Inward Connectivity Percentiles",
+    x = "Inward Connections (percentile)",
+    y = "Net Larval Flow (percentile)",
+    color = "Reef Role"
+  ) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12)
+  )
 
-#define nodes colors
-my_color <- 'd3.scaleOrdinal()
-            .domain(["Source", "Sink", "Other"])
-            .range(["#003399", "#FF3399", "#BDBDBD"])' 
+#barplot on the right
+role_counts <- as.data.frame(table(reef_df$role))
+colnames(role_counts) <- c("Role", "Count")
 
-#sankey final
-sankeyNetwork(Links = connectivity_top,
-              Nodes = nodes,
-              Source = "source_id",
-              Target = "target_id",
-              Value = "value",
-              NodeID = "name",
-              NodeGroup = "type",  # coloration par type
-              colourScale = my_color,
-              sinksRight = FALSE,
-              fontSize = 12,
-              nodeWidth = 20)
+p2 <- ggplot(role_counts, aes(x = reorder(Role, -Count), y = Count, fill = Role)) +
+  geom_col(width = 0.6) +
+  scale_fill_manual(values = colors) +
+  geom_text(aes(label = Count), vjust = -0.5, size = 4) +
+  labs(
+    title = "Number of Reefs per Role",
+    x = NULL, y = "Number of Reefs"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold", size = 14),
+    axis.text.x = element_text(angle = 25, hjust = 1)
+  )
+
+#gather the 2 plots with patwork package
+p1 + p2 + plot_layout(widths = c(2.5, 1))
+
+###map
+#merge roles with their reef names
+reef_map_df <- merge(reef_sites, reef_df[, c("reef", "role")], by.x = "id", by.y = "reef", all.x = TRUE)
+
+#NA data becomes "other"
+reef_map_df$role[is.na(reef_map_df$role)] <- "Other"
+
+#define colors
+colors <- c("Source" = "#003399", "Sink" = "#FF3399", "Connectivity Hub" = "#66CC99", "Other" = "grey80")
+
+#australia map
+australia <- ne_countries(scale = "medium", country = "Australia", returnclass = "sf")
+
+#filter key reefs (no "other")
+reef_map_df_filtered <- subset(reef_map_df, role != "Other")
+
+#map with key reefs (no "other")
+ggplot() +
+  geom_sf(data = australia, fill = "grey90", color = "black") +
+  geom_point(data = reef_map_df_filtered, aes(x = lon, y = lat, color = role), size = 3, alpha = 0.9) +
+  scale_color_manual(values = colors) +
+  coord_sf(xlim = c(150, 153), ylim = c(-24, -20), expand = FALSE) +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "Reef Connectivity Roles - Eastern Australia",
+    subtitle = "Sources, Sinks & Connectivity Hubs only",
+    x = "Longitude", y = "Latitude", color = "Reef Role"
+  ) +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12)
+  )

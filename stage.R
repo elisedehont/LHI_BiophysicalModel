@@ -18,6 +18,11 @@ install.packages("reticulate")
 install.packages("reshape2")
 install.packages("pheatmap")
 install.packages("patchwork")
+install.packages("gstat")
+install.packages("FNN")
+install.packages("writexl")
+install.packages("ggalluvial")
+install.packages("readxl")
 library(dplyr)
 library(ggplot2)
 library(gganimate)
@@ -46,8 +51,13 @@ library(reticulate)
 library(reshape2)
 library(pheatmap)
 library(patchwork)
+library(gstat)
+library(FNN)
+library(ggalluvial)
+library(writexl)
+library(readxl)
 #open file
-nc_file <- "C:/Users/33778/Desktop/StageM2/DirectionVelocity_data.nc"
+nc_file <- "C:/Users/33778/Desktop/StageM2/currents_149_168true.nc"
 nc <- nc_open(nc_file)
 
 # Print variable names and dimensions to check
@@ -64,13 +74,13 @@ print(time_units)
 #convert time values to dates
 time_origin <- as.POSIXct("1970-01-01 00:00:00", tz = "UTC")
 time_dates <- time_origin + time_values
-time_dates <- time_dates[format(time_dates, "%m") %in% c("09", "10", "11", "12", "01")]
+time_dates <- time_dates[format(time_dates, "%m") %in% c("10", "11", "12", "01", "02")]
 unique(format(time_dates, "%Y-%m"))
-table(format(time_dates, "%m"))#sept to january OK
+table(format(time_dates, "%m"))#oct to february  OK
 
 
 #print first and last dates
-print(range(time_dates)) ##09-2011 to 01 2021 OK
+print(range(time_dates)) ##10-2011 to 02 2021 OK
 diff_time <- diff(time_dates)  # Compute time differences
 print(unique(diff_time))  # Print unique time intervals
 print(head(time_dates, 20))  #first 20 time points OK
@@ -87,20 +97,30 @@ latitude <- ncvar_get(nc, "latitude")
 #empty list to store annual rasters
 annual_raster_list <- list()
 #Loop through each month
-for (month in unique(time_months[grep("-(09|10|11|12|01)$", time_months)])) {
+for (month in unique(time_months[grep("-(10|11|12|01|02)$", time_months)])) {
   print(paste("Processing month:", month))  
   
 #data indices for the month
   indices <- which(time_months == month)
   
 #extraction of monthly velocity data (U and V) 
-  uo_month <- uo[,,indices]  
-  vo_month <- vo[,,indices]
+  print(dim(uo))  #should be lon, lat, time or lon, lat, depth, time
+  print(dim(vo))
+  if (length(dim(uo)) == 4) {
+    uo <- uo[,,1,]  
+    vo <- vo[,,1,]
+  }
+  uo_month <- apply(uo[,,indices], c(1,2), mean, na.rm = TRUE)
+  vo_month <- apply(vo[,,indices], c(1,2), mean, na.rm = TRUE)
+  
   
   
 #convert to rasters
+  uo_month_raster <- raster(t(uo_month))
+  vo_month_raster <- raster(t(vo_month))
   uo_month_raster <- flip(uo_month_raster, direction = "y")
   vo_month_raster <- flip(vo_month_raster, direction = "y")
+
   
 #Defining the raster extent
   extent(uo_month_raster) <- extent(min(longitude), max(longitude), min(latitude), max(latitude))
@@ -130,9 +150,9 @@ SCD <- rast("C:/Users/33778/Desktop/StageM2/velocity/velocity_2014-12.tif")
 SCV <- rast("C:/Users/33778/Desktop/StageM2/direction/direction_2014-12.tif")
 
 #Define the area of interest (AOI)
-AOI <- ext(150, 160, -32, -20)
+AOI <- ext(149, 168, -32, -17)
 world <- ne_countries(scale = "medium", returnclass = "sf")
-land <- st_crop(world, c(xmin = 150, xmax = 160, ymin = -32, ymax = -20))
+land <- st_crop(world, c(xmin = 149, xmax = 168, ymin = -32, ymax = -17))
 
 #Cut the rasters
 SCD_crop <- crop(SCD, AOI)
@@ -190,7 +210,7 @@ ggplot() +
   labs(title = paste("Current Vectors -", month_year),
        x = "Longitude", y = "Latitude") +
   theme_minimal() +
-  coord_sf(xlim = c(150, 160), ylim = c(-32, -20))
+  coord_sf(xlim = c(149, 168), ylim = c(-32, -17))
 
 ######currents characterisation####
 
@@ -213,7 +233,7 @@ SCD_buffer <- crop(SCD_crop, buffer_extent)  # Vitesse
 SCV_buffer <- crop(SCV_crop, buffer_extent)  # Direction
 
 
-current_df <- current_df[current_df$month %in% c(9, 10, 11, 12, 1), ]
+current_df <- current_df[current_df$month %in% c(10, 11, 12, 1, 2), ]
 current_df <- current_df %>% filter(!is.na(direction) & !is.na(velocity))
 time_values <- as.Date(paste0(current_df$year, "-", current_df$month, "-01"), format = "%Y-%m-%d")
 
@@ -329,8 +349,8 @@ ggplot() +
 
 #coordinates
 buffer_extent <- ext(
-  150, 160,  # Longitude
-  -32, -20   # Latitude
+  149, 168,  # Longitude
+  -32, -17   # Latitude
 )
 
 #data extraction
@@ -359,11 +379,11 @@ ggplot() +
                    yend = y + cos(deg2rad(direction)) * velocity * 0.3,
                    color = velocity),
                arrow = arrow(length = unit(0.2, "cm"))) +
-  geom_point(data = lord_howe, aes(x = lon, y = lat), color = "red", size = 3) +
+  geom_point(data = lord_howe, aes(x = lon, y = lat), color = "red", size = 1) +
   geom_text(data = lord_howe, aes(x = lon, y = lat, label = "Lord Howe Island"), 
             hjust = 0, vjust = -1, color = "black", size = 4) +
   scale_color_gradient(low = "lightblue", high = "purple", name = "Velocity") +
-  coord_sf(xlim = c(153, 160), ylim = c(-36, -24), expand = FALSE) +  
+  coord_sf(xlim = c(149, 168), ylim = c(-32, -17), expand = FALSE) +  
   labs(title = "Currents between East Australia & Lord Howe", x = "Longitude", y = "Latitude") +
   theme_minimal()
 
@@ -404,7 +424,7 @@ head(reef_sites)
 
 
 #convert data to spatial object
-reef_sf <- st_as_sf(reef_sites, coords = c("LON", "LAT"), crs = 4326)
+reef_sf <- st_as_sf(reef_sites, coords = c("Lon", "Lat"), crs = 4326)
 
 #world
 world <- ne_countries(scale = "medium", returnclass = "sf")
@@ -413,14 +433,14 @@ world <- ne_countries(scale = "medium", returnclass = "sf")
 ggplot() +
   geom_sf(data = world, fill = "antiquewhite") +
   geom_sf(data = reef_sf, color = "red", size = 2) +
-  coord_sf(xlim = c(150, 160), ylim = c(-32, -20), expand = FALSE) +  
+  coord_sf(xlim = c(149, 168), ylim = c(-32, -17), expand = FALSE) +  
   annotation_scale(location = "bl") +
   annotation_north_arrow(location = "bl", which_north = "true") +
   theme_minimal()
 
 #calculate the geodesic distances between all the points
 #extract data
-coords <- reef_sites[, c("LON", "LAT")]
+coords <- reef_sites[, c("Lon", "Lat")]
 
 #calculate connectivity matrix (meters)
 distance_matrix <- distm(coords, fun = distHaversine)
@@ -433,7 +453,7 @@ rownames(distance_matrix_km) <- reef_sites$Reef_Name
 colnames(distance_matrix_km) <- reef_sites$Reef_Name
 
 #see
-print(round(connectivity_matrix, 2))
+print(round(distance_matrix_km, 2))
 #see and save matrix
 round(distance_matrix_km, 2)
 write.csv(distance_matrix_km, "C:/Users/33778/Desktop/Matrice_Connectivite_Recifs.csv")
@@ -447,9 +467,9 @@ file_velocity <- "C:/Users/33778/Desktop/StageM2/velocity/"
 file_list <- list.files(path = file_velocity, pattern = "\\.tif$", full.names = TRUE)
 
 #load the rasters in a stack
-stack_vitesse <- rast(file_list)
+stack_velocity <- rast(file_list)
 #calculate mean velocity pixel by pixel
-mean_velocity <- mean(stack_vitesse, na.rm = TRUE)
+mean_velocity <- mean(stack_velocity, na.rm = TRUE)
 
 #plot and save
 plot(mean_velocity, main = "Mean velocity (sept-dec, 2011-2021)")
@@ -486,51 +506,32 @@ raster_friction_directional <- 1 / sqrt(raster_U^2 + raster_V^2)
 raster_friction_directional[raster_friction_directional == Inf] <- NA
 #see and download
 plot(raster_friction_directional, main="Friction Directionnelle")
-#Lord Howe Island not covered by the friction raster, so local interpolation using a 3x3 window
+writeRaster(raster_friction_directional, "C:/Users/33778/Desktop/StageM2/raster_friction_directional.tif", overwrite = TRUE)
 
-#get the extension of the raster using ext()
-extent_friction <- ext(159.00, 159.99, ymin = ymin(ext(raster_friction_directional)), ymax = ymax(ext(raster_friction_directional)))
-
-#extract the region
-raster_friction_region <- crop(raster_friction_directional, extent_friction)
-
-#plot to check
-plot(raster_friction_region, main="Friction raster for longitude 159.00 - 159.99")
-#apply interpolation to the region
-raster_friction_filled_region <- focal(raster_friction_region,
-                                       w = matrix(1, 3, 3), # window 3x3
-                                       fun = mean,
-                                       na.policy = "only", 
-                                       na.rm = TRUE,
-                                       filename = "friction_filled_region.tif",
-                                       overwrite = TRUE)
-
-#plot
-plot(raster_friction_filled_region, main="Interpolated Friction for Longitude 159.00 - 159.99")
-raster_friction_filled <- merge(raster_friction_directional, raster_friction_filled_region)
-
-#final raster
-plot(raster_friction_filled, main="Interpolated directional friction (local average)")
-
-writeRaster(raster_friction_filled, "C:/Users/33778/Desktop/StageM2/friction_directional.tif", overwrite = TRUE)
+##we can see that the resolution is too low so interpolation in SAGA
+raster_friction_smoothed <- raster("C:/Users/33778/Desktop/StageM2/friction_smoothed.tif")
+# Visualiser le résultat
+plot(raster_friction_smoothed, main="smoothed friction raster")
 #replacing NaN values because Circuitscape cant read it
-raster_friction_filled <- raster("C:/Users/33778/Desktop/StageM2/friction_directional.tif")
-
-NAvalue(raster_friction_filled) <- -9999
+raster_friction_smoothed[is.na(raster_friction_smoothed)] <- -9999
 
 #export to .asc format because Circuitscape cant read .tif
-writeRaster(raster_friction_filled, "C:/Users/33778/Desktop/StageM2/friction_directional.asc", NAflag=-9999, overwrite=TRUE)
+writeRaster(raster_friction_smoothed, "C:/Users/33778/Desktop/StageM2/friction_smoothed.asc", NAflag=-9999, overwrite=TRUE)
 #asc format for circuitscape
 
 ###circuitscape raster pairwise
 
-resistance_matrix <- read.table("C:/Users/33778/Desktop/StageM2/connectivity_matrix_csc_resistances.out", quote="\"", comment.char="")
+resistance_matrix <- read.table("C:/Users/33778/Desktop/StageM2/connectivity_matrix_csc_resistances", quote="\"", comment.char="")
 reef_sites <- read.csv("C:/Users/33778/Desktop/StageM2/reefs_format.csv", sep = ";")
 reef_names <- reef_sites$id
 resistance_matrix_clean <- resistance_matrix[-1, -1]
 rownames(resistance_matrix_clean) <- reef_names
 colnames(resistance_matrix_clean) <- reef_names
-connectivity_matrix <- exp(-resistance_matrix_clean)
+max_resistance <- max(resistance_matrix_clean, na.rm = TRUE)
+#standardisation to balance differences in resistance
+#and avoid extreme effects while maintaining proportionality
+resistance_matrix_normalized <- resistance_matrix_clean / max_resistance
+connectivity_matrix <- exp(-resistance_matrix_normalized)
 write.csv(connectivity_matrix, "C:/Users/33778/Desktop/StageM2/Connectivity_matrix.csv")
 
 library(pheatmap)
@@ -581,12 +582,22 @@ print(top_sources)
 top_sinks <- sort(importance_import, decreasing = TRUE)[1:30]
 print("Top 30 reef sinks :")
 print(top_sinks)
-#values too similar
+#values very similar, similarity test :
+#distribution of connectivity weights
+#vectorise the matrix without the diagonal
+connectivity_values <- connectivity_matrix[lower.tri(connectivity_matrix, diag = FALSE)]
+#calculate the variation coefficient
+cv_connectivity <- sd(connectivity_values) / mean(connectivity_values)
+cv_connectivity
+cv_percent <- cv_connectivity * 100
+paste("variation coefficient (%) :", round(cv_percent, 2))
+
 
 ###simulation
 set.seed(42)  #reproductibility
-larval_production <- runif(nrow(connectivity_matrix), min = 0.5, max = 2)
-recruitment_success <- runif(ncol(connectivity_matrix), min = 0.3, max = 1.5)
+#Nafis, N. (2023, 24 janvier). The story behind ‘random.seed(42)’ in machine learning. Medium. https://medium.com/geekculture/the-story-behind-random-seed-42-in-machine-learning-b838c4ac290a
+larval_production <- runif(nrow(connectivity_matrix), min = 0.5, max = 5)
+recruitment_success <- runif(ncol(connectivity_matrix), min = 0.0001, max = 0.01)
 connectivity_matrix_bio <- connectivity_matrix
 
 #apply production factor to each line (emission)
@@ -596,8 +607,8 @@ connectivity_matrix_bio <- sweep(connectivity_matrix_bio, 1, larval_production, 
 connectivity_matrix_bio <- sweep(connectivity_matrix_bio, 2, recruitment_success, FUN = "*")
 importance_export_bio <- rowSums(connectivity_matrix_bio)
 importance_import_bio <- colSums(connectivity_matrix_bio)
-top_sources <- names(sort(importance_export, decreasing = TRUE))[1:30]
-top_sinks   <- names(sort(importance_import, decreasing = TRUE))[1:30]
+top_sources <- names(sort(importance_export_bio, decreasing = TRUE))[1:30]
+top_sinks   <- names(sort(importance_import_bio, decreasing = TRUE))[1:30]
 #quick visualization
 barplot(sort(importance_export_bio, decreasing = TRUE)[1:30], main="Top 10 reef sources", col="orange")
 barplot(sort(importance_import_bio, decreasing = TRUE)[1:30], main="Top 10 sink reefs", col="blue")
@@ -681,21 +692,22 @@ reef_map_df$role[is.na(reef_map_df$role)] <- "Other"
 colors <- c("Source" = "#003399", "Sink" = "#FF3399", "Connectivity Hub" = "#66CC99", "Other" = "grey80")
 
 #australia map
-australia <- ne_countries(scale = "medium", country = "Australia", returnclass = "sf")
+australia_LHI <- ne_countries(scale = "medium", country = "Australia", returnclass = "sf")
 
 #filter key reefs (no "other")
 reef_map_df_filtered <- subset(reef_map_df, role != "Other")
 
-#map with key reefs (no "other")
+#map with key reefs (no "other" if applying data=reef_map_df_filtered)
+#sGBR
 ggplot() +
-  geom_sf(data = australia, fill = "grey90", color = "black") +
-  geom_point(data = reef_map_df_filtered, aes(x = lon, y = lat, color = role), size = 3, alpha = 0.9) +
+  geom_sf(data = australia_LHI, fill = "grey90", color = "black") +
+  geom_point(data = reef_map_df, aes(x = lon, y = lat, color = role), size = 3, alpha = 0.9) +
   scale_color_manual(values = colors) +
-  coord_sf(xlim = c(150, 153), ylim = c(-24, -20), expand = FALSE) +
+  coord_sf(xlim = c(149, 154), ylim = c(-24, -19), expand = FALSE) +
   theme_minimal(base_size = 13) +
   labs(
-    title = "Reef Connectivity Roles - Eastern Australia",
-    subtitle = "Sources, Sinks & Connectivity Hubs only",
+    title = "Reef Connectivity Roles - Southern Great Barrier Reef",
+    subtitle = "Sources, Sinks, Connectivity Hubs and other reefs",
     x = "Longitude", y = "Latitude", color = "Reef Role"
   ) +
   theme(
@@ -703,3 +715,195 @@ ggplot() +
     plot.title = element_text(face = "bold", size = 16),
     plot.subtitle = element_text(size = 12)
   )
+
+#LHI
+land <- ne_download(scale = "large", type = "land", category = "physical", returnclass = "sf")
+lord_howe <- land[st_intersects(land, st_sfc(st_point(c(159.08, -31.55)), crs = 4326), sparse = FALSE), ]
+
+ggplot() +
+  geom_sf(data = lord_howe, fill = "grey90", color = "black") +  # Affichage de Lord Howe Island
+  geom_point(data = reef_map_df, aes(x = lon, y = lat, color = role), size = 3, alpha = 0.9) +
+  scale_color_manual(values = colors) +
+  coord_sf(xlim = c(159, 159.2), ylim = c(-31.6, -31.5), expand = FALSE) +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "Reef Connectivity Roles - Lord Howe Island",
+    subtitle = "Sources, Sinks, Connectivity Hubs and other reefs",
+    x = "Longitude", y = "Latitude", color = "Reef Role"
+  ) +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12)
+  )
+#all additional reefs
+world <- ne_countries(scale = "large", returnclass = "sf")
+
+australia_nc <- world[world$name %in% c("Australia", "New Caledonia"), ]
+
+ggplot() +
+  geom_sf(data = australia_nc, fill = "grey90", color = "black") +
+  geom_point(data = reef_map_df, aes(x = lon, y = lat, color = role), size = 3, alpha = 0.9) +
+  scale_color_manual(values = colors) +
+  coord_sf(xlim = c(149, 168), ylim = c(-32, -17), expand = FALSE) +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "Reef Connectivity Roles - All the reefs of interest",
+    subtitle = "Sources, Sinks, Connectivity Hubs and other reefs",
+    x = "Longitude", y = "Latitude", color = "Reef Role"
+  ) +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12)
+  )
+
+
+
+####classify by reef class
+write_xlsx(reef_map_df, "reef_map.xlsx")
+#add reef class to the dataframe
+reef_map_df <- read_excel("C:/Users/33778/Desktop/StageM2/reef_map.xlsx")
+#calculate %
+reef_percentages <- reef_map_df %>%
+  group_by(class, role) %>%
+  summarise(count = n()) %>%
+  group_by(class) %>%
+  mutate(percentage = count / sum(count) * 100)
+
+#create plot
+ggplot(reef_percentages, aes(x = class, y = percentage, fill = role)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_text(aes(label = sprintf("%.1f%%", percentage)), 
+            position = position_stack(vjust = 0.5), 
+            size = 3) +
+  scale_y_continuous(labels = scales::percent_format(scale = 1)) +
+  scale_fill_manual(values = colors) +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "Distribution of connectivity roles by reef class",
+    x = "Reef class",
+    y = "Percentage",
+    fill = "Reef role"
+  ) +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold", size = 16),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+
+##add temperatures to the model
+#temperature data for the AOI
+temp_df <- read.csv("C:/Users/33778/Desktop/StageM2/temperatures_AOI.csv", sep=";")
+
+#mean temperature metric per location
+temp_mean <- temp_data %>%
+  group_by(LON, LAT) %>%
+  summarise(mean_SST = mean(SST, na.rm = TRUE),
+            mean_DHW = mean(DHW, na.rm = TRUE))
+
+#search for the nearest temperature point for each reef
+nn <- get.knnx(temp_mean[, c("LON", "LAT")], reef_sites[, c("lon", "lat")], k = 1)
+
+#associate average SST/DHW values with the reef
+reef_sites$mean_SST <- temp_mean$mean_SST[nn$nn.index]
+reef_sites$mean_DHW <- temp_mean$mean_DHW[nn$nn.index]
+
+#thermal distance function
+dist_matrix <- as.matrix(dist(reef_sites[, c("mean_SST", "mean_DHW")], method = "euclidean"))
+
+#convert to similarity (close values = more similar)
+sigma <- mean(dist_matrix)  # ou autre valeur selon la sensibilité voulue
+thermal_similarity <- exp(- (dist_matrix^2) / (2 * sigma^2))
+#weighted connectivity matrix
+connectivity_weighted <- connectivity_matrix_bio * thermal_similarity
+#new quadrant plot
+reef_df_temp <- data.frame(
+  reef = colnames(connectivity_weighted),
+  export = rowSums(connectivity_weighted),
+  import = colSums(connectivity_weighted)
+)
+
+#metrics calcul
+reef_df_temp$net_flow <- reef_df_temp$export - reef_df_temp$import
+reef_df_temp$inward_degree <- reef_df_temp$import
+
+#switching to percentile
+reef_df_temp$net_flow_percentile <- ecdf(reef_df_temp$net_flow)(reef_df_temp$net_flow) * 100
+reef_df_temp$inward_degree_percentile <- ecdf(reef_df_temp$inward_degree)(reef_df_temp$inward_degree) * 100
+
+#ecological classification
+reef_df_temp$role <- "Other"
+reef_df_temp$role[reef_df_temp$net_flow_percentile >= 90] <- "Source"
+reef_df_temp$role[reef_df_temp$net_flow_percentile <= 10] <- "Sink"
+reef_df_temp$role[reef_df_temp$inward_degree_percentile >= 90] <- "Connectivity Hub"
+
+#colors
+colors <- c("Source" = "#003399", "Sink" = "#FF3399", "Connectivity Hub" = "#66CC99", "Other" = "grey80")
+
+
+plot_temp <- ggplot(reef_df_temp, aes(x = inward_degree_percentile, y = net_flow_percentile)) +
+  geom_point(aes(color = role), shape = 21, size = 2.2, stroke = 0.7, fill = "white") +
+  scale_color_manual(values = colors) +
+  geom_vline(xintercept = 90, linetype = "dashed", color = "black") +
+  geom_hline(yintercept = 90, linetype = "dashed", color = "black") +
+  geom_hline(yintercept = 10, linetype = "dashed", color = "black") +
+  theme_minimal(base_size = 13) +
+  labs(
+    title = "Quadrant Plot with Thermal Similarity",
+    subtitle = "Reef roles weighted by SST/DHW similarity",
+    x = "Inward Connectivity (percentile)",
+    y = "Net Larval Flow (percentile)",
+    color = "Reef Role"
+  ) +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 12)
+  )
+
+p1 + plot_temp + plot_layout(ncol = 2) +
+  plot_annotation(
+    title = "Comparison of Reef Roles: Without vs. With Thermal Weighting",
+    theme = theme(plot.title = element_text(face = "bold", size = 18, hjust = 0.5))
+  )
+#merge the 2 dataframes to compare
+role_comparison <- data.frame(
+  reef = reef_df$reef,
+  role_initial = reef_df$role,
+  role_thermal = reef_df_temp$role
+)
+
+#adding a column to check witch reef changed role
+role_comparison$change <- ifelse(role_comparison$role_initial == role_comparison$role_thermal,
+                                 "No change", "Changed")
+
+#alluvial plot
+ggplot(role_comparison,
+       aes(axis1 = role_initial, axis2 = role_thermal)) +
+  geom_alluvium(aes(fill = role_initial), width = 1/12, alpha=0.8) +
+  geom_stratum(width = 1/12, fill = "grey30", color = "black") +
+  geom_text(stat = "stratum", aes(label = after_stat(stratum)), size = 4, color = "white") +
+  scale_x_discrete(limits = c("Initial Role", "Thermal Role"), expand = c(0.1, 0.1)) +
+  scale_fill_manual(values = colors) +
+  theme_minimal() +
+  labs(title = "Transitions of Reef Roles with Thermal Weighting",
+       y = "Number of Reefs",
+       fill = "Initial Role")
+
+table(role_comparison$change)
+
+#barplot
+library(ggplot2)
+ggplot(role_comparison, aes(x = change, fill = change)) +
+  geom_bar(width = 0.6) +
+  scale_fill_manual(values = c("Changed" = "#FF6666", "No change" = "#66CC99")) +
+  theme_minimal() +
+  labs(title = "Number of Reefs That Changed Role After Thermal Weighting",
+       x = "Change of Role",
+       y = "Number of Reefs")
+
+
+###un raster c'est sûrement mieux pour la suite
